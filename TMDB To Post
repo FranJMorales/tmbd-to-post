@@ -1,0 +1,260 @@
+<?php
+/**
+ * Plugin Name: TMDb To Post
+ * Description: Importa automáticamente películas o programas de televisión desde TMDb a WordPress.
+ * Version: 1.1
+ * Author: <a href="https://www.fj.mk.com">FJ</a> | <a href="https://www.digitableoslutions.com">Digitable Solutions</a>
+ */
+
+// Agrega una página de configuración al menú de administración de WordPress.
+add_action('admin_menu', 'web_automatica_pelis_menu');
+function web_automatica_pelis_menu() {
+    add_menu_page('Configuración TMDB To Post', 'TMDB To post', 'manage_options', 'web-automatica-pelis-settings', 'web_automatica_pelis_settings_page');
+}
+
+// Función para renderizar la página de configuración.
+function web_automatica_pelis_settings_page() {
+    // Comprueba si el formulario ha sido enviado y si el usuario tiene permisos para actualizar opciones.
+    if (isset($_POST['submit']) && current_user_can('manage_options')) {
+        // Guarda el ID de TMDb y el tipo de contenido en las opciones de WordPress.
+        update_option('web_automatica_pelis_tmdb_id', sanitize_text_field($_POST['tmdb_id']));
+        update_option('web_automatica_pelis_content_type', sanitize_text_field($_POST['content_type']));
+
+        echo '<div class="updated"><p>Configuración guardada correctamente.</p></div>';
+    }
+
+    // Obtiene los valores actuales del ID de TMDb y el tipo de contenido.
+    $tmdb_id = get_option('web_automatica_pelis_tmdb_id');
+    $content_type = get_option('web_automatica_pelis_content_type');
+
+    // Renderiza el formulario de configuración.
+    ?>
+    <div class="wrap">
+        <h2>Configuración de IMDB To Post</h2>
+        <h2 class="nav-tab-wrapper">
+            <a href="#tab-1" class="nav-tab nav-tab-active">Configuración</a>
+            <a href="#tab-2" class="nav-tab">Generar Post</a>
+        </h2>
+
+        <div id="tab-1" class="tab-content active">
+            <form method="post" action="">
+                <?php render_config_form($tmdb_id, $content_type); ?>
+                <p><input type="submit" name="submit" class="button-primary" value="Guardar cambios" /></p>
+            </form>
+        </div>
+
+        <div id="tab-2" class="tab-content">
+            <h2>Generar Post</h2>
+            <p>Pega el ID de importación y luego haz clic en el botón "Generar Post" para importar la información y crear una nueva entrada en WordPress.</p>
+            <?php render_generate_post_form($tmdb_id); ?>
+            <button type="button" id="generate_post_button" class="button button-primary">Generar Post</button>
+        </div>
+    </div>
+
+    <style>
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+    </style>
+
+    <script>
+        // Script de jQuery para manejar los tabs
+        jQuery(document).ready(function($) {
+            $('.nav-tab').on('click', function(e) {
+                e.preventDefault();
+                $('.nav-tab').removeClass('nav-tab-active');
+                $('.tab-content').removeClass('active');
+                
+                $(this).addClass('nav-tab-active');
+                $($(this).attr('href')).addClass('active');
+            });
+
+            $('#generate_post_button').on('click', function() {
+                var import_id = $('#import_id').val();
+                
+                // Realiza una solicitud AJAX para iniciar la importación.
+                $.ajax({
+                    url: ajaxurl,
+                    type: 'POST',
+                    data: {
+                        action: 'import_tmdb_data',
+                        tmdb_id: import_id,
+                        content_type: '<?php echo $content_type; ?>'
+                    },
+                    success: function(response) {
+                        alert('Datos importados exitosamente.');
+                        location.reload(); // Recarga la página para mostrar los cambios.
+                    },
+                    error: function(xhr, status, error) {
+                        alert('Error al importar los datos.');
+                        console.error(xhr.responseText);
+                    }
+                });
+            });
+        });
+    </script>
+    <?php
+}
+
+// Función para renderizar el formulario de configuración
+function render_config_form($tmdb_id, $content_type) {
+    ?>
+    <table class="form-table">
+        <tr valign="top">
+            <th scope="row">ID de TMDb:</th>
+            <td><input type="text" name="tmdb_id" value="<?php echo esc_attr($tmdb_id); ?>" /></td>
+        </tr>
+        <tr valign="top">
+            <th scope="row">Tipo de contenido:</th>
+            <td>
+                <select name="content_type">
+                    <option value="movie" <?php selected($content_type, 'movie'); ?>>Películas</option>
+                    <option value="tv" <?php selected($content_type, 'tv'); ?>>Programas de televisión</option>
+                </select>
+            </td>
+        </tr>
+    </table>
+    <?php
+}
+
+// Función para renderizar el formulario de generar post
+function render_generate_post_form($import_id) {
+    ?>
+    <label for="import_id">ID de importación:</label>
+    <input type="text" id="import_id" name="import_id" value="" placeholder="Ingresa el ID de importación" />
+    <?php
+}
+
+// Función para obtener la clave de API de TMDb.
+function get_tmdb_api_key() {
+    return get_option('web_automatica_pelis_api_key');
+}
+
+// Función para obtener el tipo de contenido seleccionado.
+function get_content_type() {
+    return get_option('web_automatica_pelis_content_type', 'movie'); // Valor predeterminado: película.
+}
+
+// Función para importar películas o programas de televisión desde TMDb.
+function import_content_from_tmdb($import_id, $content_type) {
+    // Obtiene la clave de API.
+    $api_key = get_tmdb_api_key();
+    $content_type = get_content_type();
+    // Verifica si se ha proporcionado un ID de TMDb.
+    if (!empty($import_id)) {
+        $request_url = 'https://api.themoviedb.org/3/' . $content_type . '/' . $import_id . '?api_key=' . $api_key . '&language=es';
+
+        // Realiza la solicitud a la API.
+        $response = wp_remote_get($request_url);
+
+        // Procesa la respuesta.
+        if (!is_wp_error($response)) {
+            $content_data = json_decode(wp_remote_retrieve_body($response), true);
+
+            // Verifica si se obtuvieron datos.
+            if (!empty($content_data)) {
+                // Crea un nuevo post en WordPress con los datos de la película o programa de televisión.
+                $post_data = array(
+                    'post_status' => 'publish',
+                    'post_type' => 'post', // Puedes cambiar el tipo de post según tus necesidades.
+                );
+
+                // Añade las categorías del post basadas en los géneros de la película o programa de televisión.
+                $categories = array();
+                foreach ($content_data['genres'] as $genre) {
+                    $categories[] = $genre['name'];
+                }
+                $post_data['post_category'] = wp_create_categories($categories);
+
+                // Añade las características específicas de los programas de televisión o películas.
+                $post_content = '<h2>Sinopsis</h2><p>' . $content_data['overview'] . '</p>';
+                if ($content_type == 'tv') {
+                    // Si es un programa de televisión.
+                    $post_data['post_title'] = $content_data['original_name'];
+                    $post_content .= '<h2>Detalles de la Serie ' . $content_data['original_name'] . '</h2>';
+                    $post_content .= '<ul>';
+                    $post_content .= '<li><strong>Género:</strong> ' . implode(', ', array_column($content_data['genres'], 'name')) . '</li>';
+                    $post_content .= '<li><strong>Número de Episodios:</strong> ' . $content_data['number_of_episodes'] . '</li>';
+                    $post_content .= '<li><strong>Temporadas:</strong></li>';
+                    foreach ($content_data['seasons'] as $season) {
+                        $post_content .= '<li>- ' . $season['name'] . ' (' . $season['episode_count'] . ' episodios)</li>';
+                    }
+                    $post_content .= '</ul>';
+                    // Añade el tag "Series".
+                    $post_data['tags_input'] = 'Series';
+                } else {
+                    // Si es una película.
+                    $post_data['post_title'] = $content_data['title'];
+                    $post_content .= '<h2>Detalles de la Película ' . $content_data['title'] . '</h2>';
+                    $post_content .= '<ul>';
+                    $post_content .= '<li><strong>Género:</strong> ' . implode(', ', array_column($content_data['genres'], 'name')) . '</li>';
+                    $post_content .= '<li><strong>Fecha de lanzamiento:</strong> ' . $content_data['release_date'] . '</li>';
+                    $post_content .= '<li><strong>Status:</strong> ' . $content_data['status'] . '</li>';
+                    $post_content .= '</ul>';
+                    // Añade el tag "Películas".
+                    $post_data['tags_input'] = 'Películas';
+                }
+
+                $post_data['post_content'] = $post_content;
+
+                // Inserta el post en WordPress.
+                $post_id = wp_insert_post($post_data);
+
+                // Si la inserción fue exitosa, puedes seguir con otras acciones.
+                if (!is_wp_error($post_id)) {
+                    // Establece la imagen destacada como el póster de la película o programa de televisión.
+                    if (!empty($content_data['poster_path'])) {
+                        $poster_url = 'https://image.tmdb.org/t/p/w600_and_h900_bestv2' . $content_data['poster_path'];
+                        web_automatica_pelis_set_post_featured_image($post_id, $poster_url);
+                    }
+                }
+            }
+        }
+    }
+}
+
+
+// Función para establecer la imagen destacada de una entrada.
+function web_automatica_pelis_set_post_featured_image($post_id, $image_url) {
+    // Descarga la imagen desde la URL.
+    $image_name = basename($image_url);
+    $upload_dir = wp_upload_dir();
+    $image_data = file_get_contents($image_url);
+    $unique_file_name = wp_unique_filename($upload_dir['path'], $image_name);
+
+    // Guarda la imagen en la carpeta de subida de WordPress.
+    $filename = $upload_dir['path'] . '/' . $unique_file_name;
+    file_put_contents($filename, $image_data);
+
+    // Establece la imagen como la imagen destacada.
+    $file_type = wp_check_filetype($filename, null);
+    $attachment = array(
+        'post_mime_type' => $file_type['type'],
+        'post_title' => sanitize_file_name($image_name),
+        'post_content' => '',
+        'post_status' => 'inherit'
+    );
+    $attach_id = wp_insert_attachment($attachment, $filename, $post_id);
+    require_once(ABSPATH . 'wp-admin/includes/image.php');
+    $attach_data = wp_generate_attachment_metadata($attach_id, $filename);
+    wp_update_attachment_metadata($attach_id, $attach_data);
+
+    // Establece el ID de la imagen destacada de la entrada.
+    set_post_thumbnail($post_id, $attach_id);
+}
+
+// Función para manejar la solicitud AJAX de importación.
+add_action('wp_ajax_import_tmdb_data', 'import_tmdb_data_ajax');
+function import_tmdb_data_ajax() {
+    // Verifica si se ha proporcionado un ID de TMDb.
+    if (isset($_POST['tmdb_id']) && isset($_POST['content_type'])) {
+        $tmdb_id = sanitize_text_field($_POST['tmdb_id']);
+        $content_type = sanitize_text_field($_POST['content_type']);
+        import_content_from_tmdb($tmdb_id, $content_type);
+        die();
+    }
+}
